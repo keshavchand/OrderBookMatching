@@ -5,12 +5,42 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Map;
 
+import java.util.concurrent.ConcurrentLinkedQueue;
 
-public class OrderBook {
+public class OrderBook extends Thread{
 	public enum Side{
 		BUY,
 		SELL,
+	}
+	enum Action{
+		ADD,
+		REMOVE,
+	}
+
+	static public class IncomingOrder{
+		int timestamp;
+    Action action;
+		String order_id;
+		Side side;
+		float price;
+		int size;
+
+    IncomingOrder(int timestamp, String order_id, Side side, float price, int size){
+		  this.timestamp = timestamp;
+      this.action = Action.ADD;
+      this.order_id = order_id;
+      this.side = side;
+		  this.price = price;
+		  this.size = size;
+    }
+    IncomingOrder(int timestamp, String order_id, int size){
+		  this.timestamp = timestamp;
+      this.action = Action.REMOVE;
+      this.order_id = order_id;
+		  this.size = size;
+    }
 	}
 	class Order{
 		int timestamp;
@@ -20,11 +50,43 @@ public class OrderBook {
 		int size;
 	}
 
-	public TreeMap<Float, ArrayList<Order>> BuyOrder = new TreeMap<>(Collections.reverseOrder());
-	public TreeMap<Float, ArrayList<Order>> SellOrder = new TreeMap<>();
+	TreeMap<Float, ArrayList<Order>> BuyOrder = new TreeMap<>(Collections.reverseOrder());
+	TreeMap<Float, ArrayList<Order>> SellOrder = new TreeMap<>();
   HashMap<String, ArrayList<Order>> SigToOrder = new HashMap<>();
-  
-  Side addOrder(int timestamp, String order_id, Side side, float price, int size){
+  ConcurrentLinkedQueue<IncomingOrder> iorder = null;
+  ConcurrentLinkedQueue<String> output = null;
+
+  public OrderBook(ConcurrentLinkedQueue<IncomingOrder> iorder, ConcurrentLinkedQueue<String> output, int quantity){
+    this.iorder = iorder;
+    this.output = output;
+    this.quantity = quantity;
+  }
+
+  @Override
+  public void run(){
+
+    while (true){
+      IncomingOrder io = iorder.poll();
+      Side side = null;
+      int timestamp = 0;
+      if (io != null){
+        timestamp = io.timestamp;
+        if (io.action == Action.ADD)
+          side = addOrder(io.timestamp, io.order_id, io.side, io.price, io.size);
+        else if (io.action == Action.REMOVE)
+          side = reduceOrder(io.order_id, io.size);
+      }
+      
+      if (side != null){
+        String s = printOutput(timestamp, side);
+        if (s != null)
+          output.add(s);
+      }
+
+    }
+  }
+
+  private Side addOrder(int timestamp, String order_id, Side side, float price, int size){
     Order order = new Order();
     order.timestamp = timestamp;
     order.order_id = order_id;
@@ -47,7 +109,7 @@ public class OrderBook {
     return side;
   }
 
-  Side reduceOrder(String order_id, int reduce_amt){
+  private Side reduceOrder(String order_id, int reduce_amt){
     Side side = null;
     ArrayList<Order> orders = SigToOrder.get(order_id);
     if (orders == null) return side;
@@ -73,7 +135,7 @@ public class OrderBook {
     return side;
   }
 
-  Float findPrice(int quantity, TreeMap<Float, ArrayList<Order>> orderMap){
+  private Float findPrice(int quantity, TreeMap<Float, ArrayList<Order>> orderMap){
     float totalPrice = 0;
     for (Map.Entry<Float, ArrayList<Order>> entry : orderMap.entrySet()) {
       float price = entry.getKey();
@@ -86,6 +148,50 @@ public class OrderBook {
       }
     }
 
+    return null;
+  }
+
+  boolean buy_found = false;
+  boolean sell_found = false;
+  int quantity = 200;
+  String printOutput(int timestamp, Side side){
+    Float price = null; 
+    StringBuilder output_string = new StringBuilder();
+    // If quantity is available on BUY side
+    // then we sell
+    if (side == Side.BUY){
+      price = findPrice(quantity, BuyOrder);
+      if (price != null){
+        buy_found = true;
+        output_string.append(timestamp);
+        output_string.append(" ").append("S");
+        output_string.append(" ").append(price);
+      }else if (buy_found){
+        buy_found = false;
+        output_string.append(timestamp);
+        output_string.append(" ").append("S");
+        output_string.append(" ").append("NA");
+      }
+    }
+    // If quantity is available on SELL side
+    // then we BUY
+    else if (side == Side.SELL){
+      price = findPrice(quantity, SellOrder);
+      if (price != null){
+        sell_found = true;
+        output_string.append(timestamp);
+        output_string.append(" ").append("B");
+        output_string.append(" ").append(price);
+      }else if (sell_found){
+        sell_found = false;
+        output_string.append(timestamp);
+        output_string.append(" ").append("B");
+        output_string.append(" ").append("NA");
+      }
+    }
+
+    if (output_string.length() != 0)
+      return output_string.toString();
     return null;
   }
 }
